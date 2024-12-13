@@ -1,0 +1,8 @@
+# 注意：）複数選択をする場合，スペースを入れるとエラーが発生するので，スペースを入れないようにしてください．
+normalization_method: standard    # method: standard, minmax, robust (複数選択可)
+encoding_method: angle,qrac      # method: 'amplitude', 'phase', 'angle', 'qrac' (複数選択可)
+print_circuit: False              # True or False
+print_eigenvalues: False          # True or False
+print_eigenvectors: False         # True or False
+print_top_eingenvectors: False    # True or False
+print_clasical_data: False        # True or False
