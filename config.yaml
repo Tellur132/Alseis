@@ -1,6 +1,13 @@
 # 注意：）複数選択をする場合，スペースを入れるとエラーが発生するので，スペースを入れないようにしてください．
-normalization_method: standard    # method: standard, minmax, robust (複数選択可)
-encoding_method: angle,qrac      # method: 'amplitude', 'phase', 'angle', 'qrac' (複数選択可)
+# dataset name: iris, wine, breast_cancer, digits, diabetes, moons, circles, blobs (複数選択可)
+dataset_name: moons
+
+# normalization_method: standard, minmax, robust (複数選択可)       
+normalization_method: standard
+
+# encoding_method: 'amplitude', 'phase', 'angle', 'qrac' (複数選択可)    
+encoding_method: angle,qrac
+
 print_circuit: False              # True or False
 print_eigenvalues: False          # True or False
 print_eigenvectors: False         # True or False

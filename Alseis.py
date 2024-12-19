@@ -2,7 +2,7 @@ import cirq
 import numpy as np
 import pandas as pd
 import yaml
-from sklearn.datasets import load_iris
+from sklearn.datasets import load_iris, load_wine, load_breast_cancer, load_digits, load_diabetes, make_moons, make_circles, make_blobs
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 from scipy.linalg import eigh
 
@@ -13,17 +13,44 @@ def load_config(config_path):
     """
     YAML形式の設定ファイルを読み込む関数。
     """
-    with open(config_path, 'r') as file:
+    with open(config_path, 'r', encoding='utf-8') as file:
         return yaml.safe_load(file)
 
 
-def load_and_scale_iris(method='standard'):
+def load_and_scale_dataset(dataset_name, method='standard'):
     """
-    アイリスデータセットを読み込み、指定された方法で標準化または正規化して返します。
-    method: 'standard', 'minmax', 'robust' のいずれかを指定
+    指定されたデータセットを読み込み、指定方法でスケーリングした上で返す関数。
+    dataset_name: 'iris', 'wine', 'breast_cancer', 'digits', 'diabetes' などを想定
+    method: 'standard', 'minmax', 'robust'
     """
-    data = load_iris()
-    iris_df = pd.DataFrame(data.data, columns=data.feature_names)
+    # ここを変更: 複数のデータセットに対応
+    if dataset_name == 'iris':
+        data = load_iris()
+    elif dataset_name == 'wine':
+        data = load_wine()
+    elif dataset_name == 'breast_cancer':
+        data = load_breast_cancer()
+    elif dataset_name == 'digits':
+        data = load_digits()
+    elif dataset_name == 'diabetes':
+        data = load_diabetes()
+    elif dataset_name == 'moons':
+        data = make_moons(n_samples=500, noise=0.05)
+    elif dataset_name == 'circles':
+        data = make_circles(n_samples=500, noise=0.05, factor=0.5)
+    elif dataset_name == 'blobs':
+        data = make_blobs(n_samples=500, centers=3, cluster_std=1.0)
+    else:
+        raise ValueError(f"Unknown dataset: {dataset_name}")
+
+    # data が Bunch であれば data.data でアクセスできる
+    # タプルであれば (features, target) のような形式になっているので、
+    # features = data[0] から取得
+    if hasattr(data, 'data'):
+        features = data.data
+    else:
+        # data がタプルだった場合
+        features = data[0]
 
     if method == 'standard':
         scaler = StandardScaler()
@@ -34,7 +61,7 @@ def load_and_scale_iris(method='standard'):
     else:
         raise ValueError(f"Unknown method: {method}")
 
-    scaled_features = scaler.fit_transform(iris_df)
+    scaled_features = scaler.fit_transform(features)
     return scaled_features
 
 
@@ -164,72 +191,69 @@ def calculate_contribution_ratios(eigenvalues, sorted_indices, num_components):
 def main():
     # 設定ファイルのパスを指定
     config = load_config(CONFIG_PTAH)
-    normalization_method = config.get(
+    dataset_names = config.get('dataset_name', 'iris').split(
+        ',')   # ここを変更: データセット名を複数取得
+    normalization_methods = config.get(
         'normalization_method', 'standard').split(',')
-    encoding_method = config.get('encoding_method', 'amplitude').split(',')
+    encoding_methods = config.get('encoding_method', 'amplitude').split(',')
     config_print_circuit = config.get('print_circuit', False)
     config_print_top_eingenvectors = config.get(
         'print_top_eingenvectors', False)
     config_print_clasical_data = config.get('print_clasical_data', False)
 
-    # アイリスデータセットの読み込みと標準化
-    all_scaled_data = {}
-    for method in normalization_method:
-        print(f"Testing with {method} normalization:")
-        scaled_data = load_and_scale_iris(method)
-        all_scaled_data[method] = scaled_data
+    for dname in dataset_names:
+        # データセットごとに処理
+        print(f"=== Dataset: {dname} ===")
+        for norm_method in normalization_methods:
+            print(f"Testing with {norm_method} normalization:")
+            scaled_data = load_and_scale_dataset(
+                dname.strip(), norm_method)  # ここを変更: 汎用化した関数を使用
+            # all_scaled_data = {norm_method: scaled_data}
 
-        # 量子ビットの準備
-        num_qubits = scaled_data.shape[1]
-        qubits = [cirq.LineQubit(i) for i in range(num_qubits)]
+            # 量子ビット準備
+            num_qubits = scaled_data.shape[1]
+            qubits = [cirq.LineQubit(i) for i in range(num_qubits)]
 
-        # 各サンプルを量子エンコードし、回路を作成
-        all_circuits = {}
-        for norm_method, scaled_data in all_scaled_data.items():
-            for method in encoding_method:
-                print(
-                    f"Testing with {method} encoding (Normalization: {norm_method}):")
+            for method in encoding_methods:
+                print(f"Testing with {
+                      method} encoding (Normalization: {norm_method}):")
                 circuits = []
                 for data in scaled_data:
                     circuits.append(
                         create_quantum_encoding_circuit(qubits, data, method))
-                    # 複数のサンプルに対してより多くのエンコードを行うためにサンプル数を増やす
-                    for _ in range(5):  # 各サンプルに対して追加でエンコードを作成（例として5回）
-                        # ノイズの標準偏差を小さくして調整
+                    for _ in range(5):
                         noisy_data = data + \
                             np.random.normal(0, 0.005, data.shape)
                         noisy_data = np.clip(noisy_data, -1.0, 1.0)
-                        noisy_data = np.nan_to_num(
-                            noisy_data)  # NaNが発生した場合にゼロに置き換える
+                        noisy_data = np.nan_to_num(noisy_data)
                         circuits.append(create_quantum_encoding_circuit(
                             qubits, noisy_data, method))
-                all_circuits[method] = circuits
 
                 if config_print_circuit:
-                    # 作成した各回路を表示
                     for i, circuit in enumerate(circuits):
                         print(f"Quantum Encoding Circuit for sample {i}:")
                         print(circuit)
 
-                # qPCAの実行
                 top_eigenvectors, eigenvalues, sorted_indices = perform_qpca(
-                    qubits, all_circuits[method], num_iterations=2)
+                    qubits, circuits, num_iterations=2)
                 if config_print_top_eingenvectors:
                     print("Top Eigenvectors after qPCA:")
                     print(top_eigenvectors)
 
-                # qPCAで次元削減したデータを低次元空間に射影して古典データに戻す
                 decoded_data = decode_quantum_data(
                     top_eigenvectors, scaled_data)
                 if config_print_clasical_data:
                     print("Decoded Classical Data:")
                     print(decoded_data)
 
-                # 寄与率の計算と表の作成
                 contribution_table = calculate_contribution_ratios(
                     eigenvalues, sorted_indices, num_components=2)
                 print("Contribution Ratios Table:")
                 print(contribution_table)
+
+                print("\n")  # エンコード方法間の区切り
+            print("\n")  # 正規化方法間の区切り
+        print("\n")  # データセット間の区切り
 
 
 if __name__ == "__main__":
