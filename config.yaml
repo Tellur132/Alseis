@@ -6,7 +6,7 @@ dataset_name: iris
 normalization_method: standard
 
 # encoding_method: 'amplitude', 'phase', 'angle', 'qrac' (複数選択可)    
-encoding_method: angle,qrac
+encoding_method: qrac
 
 random_seed:
   mode: fixed      # 'fixed' または 'random'
@@ -17,3 +17,12 @@ print_eigenvalues: False          # True or False
 print_eigenvectors: False         # True or False
 print_top_eingenvectors: False    # True or False
 print_clasical_data: False        # True or False
+
+plotting:
+  plot_original_data: true
+  plot_qpca_results: true
+  plot_eigenvalues: true
+  save_figures: true
+  original_data_fig_path: "original_data.png"
+  qpca_results_fig_path: "qpca_results.png"
+  eigenvalues_fig_path: "eigenvalues.png"

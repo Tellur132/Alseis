@@ -3,10 +3,13 @@ import cirq
 import numpy as np
 import pandas as pd
 import yaml
+import matplotlib.pyplot as plt
+import seaborn as sns
 from sklearn.datasets import load_iris, load_wine, load_breast_cancer, load_digits, load_diabetes
 from sklearn.datasets import make_moons, make_circles, make_blobs, make_classification
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 from scipy.linalg import eigh
+from sklearn.decomposition import PCA
 
 CONFIG_PATH = 'config.yaml'
 
@@ -76,9 +79,14 @@ def load_and_scale_dataset(dataset_name, method='standard', random_state=None):
     # features = data[0] から取得
     if hasattr(data, 'data'):
         features = data.data
+        if hasattr(data, 'target'):
+            labels = data.target
+        else:
+            labels = None
     else:
         # data がタプルだった場合
         features = data[0]
+        labels = data[1] if len(data) > 1 else None
 
     if method == 'standard':
         scaler = StandardScaler()
@@ -90,7 +98,7 @@ def load_and_scale_dataset(dataset_name, method='standard', random_state=None):
         raise ValueError(f"Unknown method: {method}")
 
     scaled_features = scaler.fit_transform(features)
-    return scaled_features
+    return scaled_features, labels
 
 
 def create_quantum_encoding_circuit(qubits, data, method='amplitude'):
@@ -155,11 +163,10 @@ def create_quantum_encoding_circuit(qubits, data, method='amplitude'):
     return circuit
 
 
-def perform_qpca(circuits, num_iterations, simulator):
+def perform_qpca(circuits, num_iterations, simulator, config):
     """
     qPCAを実施し、エンコードされた量子データに対して次元削減を行います。
     """
-    config = load_config(CONFIG_PATH)
     config_print_eigenvalues = config.get('print_eigenvalues', False)
     config_print_eigenvectors = config.get('print_eigenvectors', False)
 
@@ -215,6 +222,117 @@ def calculate_contribution_ratios(eigenvalues, sorted_indices, num_components):
     return contribution_table
 
 
+def plot_original_data(scaled_data, labels, dataset_name, config):
+    """
+    元のデータを2次元でプロットします。データが2次元より高次元の場合はPCAで2次元に次元削減します。
+    """
+    plot_config = config.get('plotting', {})
+    plot_original = plot_config.get('plot_original_data', False)
+    save_fig = plot_config.get('save_figures', False)
+    fig_path = plot_config.get('original_data_fig_path', f"{
+                               dataset_name}_original_data.png")
+
+    if not plot_original:
+        return
+
+    if scaled_data.shape[1] > 2:
+        pca = PCA(n_components=2)
+        data_2d = pca.fit_transform(scaled_data)
+        title = f"{dataset_name} Original Data (PCA Reduced to 2D)"
+    else:
+        data_2d = scaled_data
+        title = f"{dataset_name} Original Data"
+
+    plt.figure(figsize=(8, 6))
+    if labels is not None:
+        unique_labels = np.unique(labels)
+        palette = sns.color_palette("hsv", len(unique_labels))
+        sns.scatterplot(x=data_2d[:, 0], y=data_2d[:, 1],
+                        hue=labels, palette=palette, legend='full')
+    else:
+        sns.scatterplot(x=data_2d[:, 0], y=data_2d[:, 1])
+    plt.title(title)
+    plt.xlabel("Component 1")
+    plt.ylabel("Component 2")
+    plt.tight_layout()
+    if save_fig:
+        plt.savefig(fig_path)
+        print(f"Original data plot saved to {fig_path}")
+    else:
+        plt.show()
+    plt.close()
+
+
+def plot_qpca_results(decoded_data, labels, dataset_name, config):
+    """
+    qPCA後の低次元データをプロットします。
+    """
+    plot_config = config.get('plotting', {})
+    plot_qpca = plot_config.get('plot_qpca_results', False)
+    save_fig = plot_config.get('save_figures', False)
+    fig_path = plot_config.get('qpca_results_fig_path', f"{
+                               dataset_name}_qpca_results.png")
+
+    if not plot_qpca:
+        return
+
+    if decoded_data.shape[1] > 2:
+        pca = PCA(n_components=2)
+        data_2d = pca.fit_transform(decoded_data)
+        title = f"{dataset_name} qPCA Results (PCA Reduced to 2D)"
+    else:
+        data_2d = decoded_data
+        title = f"{dataset_name} qPCA Results"
+
+    plt.figure(figsize=(8, 6))
+    if labels is not None:
+        unique_labels = np.unique(labels)
+        palette = sns.color_palette("hsv", len(unique_labels))
+        sns.scatterplot(x=data_2d[:, 0], y=data_2d[:, 1],
+                        hue=labels, palette=palette, legend='full')
+    else:
+        sns.scatterplot(x=data_2d[:, 0], y=data_2d[:, 1])
+    plt.title(title)
+    plt.xlabel("Component 1")
+    plt.ylabel("Component 2")
+    plt.tight_layout()
+    if save_fig:
+        plt.savefig(fig_path)
+        print(f"qPCA results plot saved to {fig_path}")
+    else:
+        plt.show()
+    plt.close()
+
+
+def plot_eigenvalues(eigenvalues, sorted_indices, dataset_name, config):
+    """
+    固有値をプロットし、寄与率を視覚化します。
+    """
+    plot_config = config.get('plotting', {})
+    plot_eigen = plot_config.get('plot_eigenvalues', False)
+    save_fig = plot_config.get('save_figures', False)
+    fig_path = plot_config.get('eigenvalues_fig_path', f"{
+                               dataset_name}_eigenvalues.png")
+
+    if not plot_eigen:
+        return
+
+    sorted_eigenvalues = eigenvalues[sorted_indices]
+    plt.figure(figsize=(8, 6))
+    sns.barplot(x=np.arange(1, len(sorted_eigenvalues)+1),
+                y=sorted_eigenvalues, palette="viridis")
+    plt.title(f"{dataset_name} Eigenvalues (Sorted)")
+    plt.xlabel("Component")
+    plt.ylabel("Eigenvalue")
+    plt.tight_layout()
+    if save_fig:
+        plt.savefig(fig_path)
+        print(f"Eigenvalues plot saved to {fig_path}")
+    else:
+        plt.show()
+    plt.close()
+
+
 def main():
     # 設定ファイルのパスを指定
     config = load_config(CONFIG_PATH)
@@ -242,7 +360,7 @@ def main():
         print(f"=== Dataset: {dname} ===")
         for norm_method in normalization_methods:
             print(f"Testing with {norm_method} normalization:")
-            scaled_data = load_and_scale_dataset(
+            scaled_data, labels = load_and_scale_dataset(
                 dname.strip(), norm_method, random_state=seed if seed is not None else None)  # シードを渡す
             # 量子ビット準備
             num_qubits = scaled_data.shape[1]
@@ -274,7 +392,7 @@ def main():
                         print(circuit)
 
                 top_eigenvectors, eigenvalues, sorted_indices = perform_qpca(
-                    circuits, num_iterations=2, simulator=simulator)
+                    circuits, num_iterations=2, simulator=simulator, config=config)
                 if config_print_top_eigenvectors:
                     print("Top Eigenvectors after qPCA:")
                     print(top_eigenvectors)
@@ -289,6 +407,18 @@ def main():
                     eigenvalues, sorted_indices, num_components=2)
                 print("Contribution Ratios Table:")
                 print(contribution_table)
+
+                # プロットの生成
+                plotting_methods = config.get('plotting', {})
+                if plotting_methods.get('plot_original_data', False):
+                    plot_original_data(scaled_data, labels,
+                                       dname.strip(), config)
+                if plotting_methods.get('plot_qpca_results', False):
+                    plot_qpca_results(decoded_data, labels,
+                                      dname.strip(), config)
+                if plotting_methods.get('plot_eigenvalues', False):
+                    plot_eigenvalues(
+                        eigenvalues, sorted_indices, dname.strip(), config)
 
                 print("\n")  # エンコード方法間の区切り
             print("\n")  # 正規化方法間の区切り
