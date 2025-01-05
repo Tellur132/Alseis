@@ -183,6 +183,10 @@ def perform_qpca(circuits, num_iterations, simulator, config):
     # 固有値と固有ベクトルを計算（qPCAの中心的な部分）
     eigenvalues, eigenvectors = eigh(avg_density_matrix)
 
+    # 実数部分のみを使用
+    eigenvalues = eigenvalues.real
+    eigenvectors = eigenvectors.real
+
     if config_print_eigenvalues:
         print("Eigenvalues:")
         print(eigenvalues)
@@ -201,8 +205,8 @@ def decode_quantum_data(top_eigenvectors, scaled_data):
     """
     qPCAで次元削減した量子データを古典データに低次元空間に射影します
     """
-    # 元のデータを低次元空間に射影するために、データと固有ベクトルの次元を整合させる
-    top_eigenvectors_reduced = top_eigenvectors[:scaled_data.shape[1], :]
+    # 実数部分のみを使用
+    top_eigenvectors_reduced = top_eigenvectors[:scaled_data.shape[1], :].real
     reduced_data = np.dot(scaled_data, top_eigenvectors_reduced)
     return reduced_data
 
@@ -242,6 +246,9 @@ def plot_original_data(scaled_data, labels, dataset_name, config):
     else:
         data_2d = scaled_data
         title = f"{dataset_name} Original Data"
+
+    # 実数部分のみを使用
+    data_2d = data_2d.real
 
     plt.figure(figsize=(8, 6))
     if labels is not None:
@@ -284,6 +291,9 @@ def plot_qpca_results(decoded_data, labels, dataset_name, config):
         data_2d = decoded_data
         title = f"{dataset_name} qPCA Results"
 
+    # 実数部分のみを使用
+    data_2d = data_2d.real
+
     plt.figure(figsize=(8, 6))
     if labels is not None:
         unique_labels = np.unique(labels)
@@ -319,8 +329,11 @@ def plot_eigenvalues(eigenvalues, sorted_indices, dataset_name, config):
 
     sorted_eigenvalues = eigenvalues[sorted_indices]
     plt.figure(figsize=(8, 6))
+
+    # paletteを使用せず、colorパラメータを使用
     sns.barplot(x=np.arange(1, len(sorted_eigenvalues)+1),
-                y=sorted_eigenvalues, palette="viridis")
+                y=sorted_eigenvalues, color="skyblue")
+
     plt.title(f"{dataset_name} Eigenvalues (Sorted)")
     plt.xlabel("Component")
     plt.ylabel("Eigenvalue")
@@ -346,7 +359,7 @@ def main():
         'normalization_method', 'standard').split(',')
     encoding_methods = config.get('encoding_method', 'amplitude').split(',')
     config_print_circuit = config.get('print_circuit', False)
-    config_print_top_eigenvectors = config.get('print_top_eigenvectors', False)
+    config_print_top_eigenvectors = config.get('print_eigenvectors', False)
     config_print_classical_data = config.get('print_classical_data', False)
 
     # Cirqのシミュレーターにシードを渡す（固定シードが必要な場合）
