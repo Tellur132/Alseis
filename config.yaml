@@ -1,12 +1,16 @@
 # 注意：）複数選択をする場合，スペースを入れるとエラーが発生するので，スペースを入れないようにしてください．
 # dataset name: iris, wine, breast_cancer, digits, diabetes, moons, circles, blobs, high_dim (複数選択可)
-dataset_name: high_dim
+dataset_name: iris
 
 # normalization_method: standard, minmax, robust (複数選択可)       
 normalization_method: standard
 
 # encoding_method: 'amplitude', 'phase', 'angle', 'qrac' (複数選択可)    
 encoding_method: angle,qrac
+
+random_seed:
+  mode: fixed      # 'fixed' または 'random'
+  value: 1         # modeが'fixed'の場合に使用するシード値
 
 print_circuit: False              # True or False
 print_eigenvalues: False          # True or False

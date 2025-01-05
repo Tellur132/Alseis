@@ -1,3 +1,4 @@
+import random
 import cirq
 import numpy as np
 import pandas as pd
@@ -7,7 +8,7 @@ from sklearn.datasets import make_moons, make_circles, make_blobs, make_classifi
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 from scipy.linalg import eigh
 
-CONFIG_PTAH = 'config.yaml'
+CONFIG_PATH = 'config.yaml'
 
 
 def load_config(config_path):
@@ -18,13 +19,33 @@ def load_config(config_path):
         return yaml.safe_load(file)
 
 
-def load_and_scale_dataset(dataset_name, method='standard'):
+def set_random_seed(config):
+    """
+    設定に基づいてシードを固定またはランダムに設定します。
+    """
+    seed_config = config.get('random_seed', {})
+    mode = seed_config.get('mode', 'random')
+
+    if mode == 'fixed':
+        seed = seed_config.get('value', 42)
+        np.random.seed(seed)
+        random.seed(seed)
+        # Cirqでは明示的なシード設定は少ないが、シミュレーターにシードを渡すことが可能
+        return seed
+    elif mode == 'random':
+        # シードを固定しない場合
+        return None
+    else:
+        raise ValueError("random_seed.mode は 'fixed' または 'random' を指定してください。")
+
+
+def load_and_scale_dataset(dataset_name, method='standard', random_state=None):
     """
     指定されたデータセットを読み込み、指定方法でスケーリングした上で返す関数。
-    dataset_name: 'iris', 'wine', 'breast_cancer', 'digits', 'diabetes' などを想定
+    dataset_name: 'iris', 'wine', 'breast_cancer', 'digits', 'diabetes', 'moons', 'circles', 'blobs', 'high_dim' などを想定
     method: 'standard', 'minmax', 'robust'
+    random_state: データ生成時のランダムシード
     """
-    # ここを変更: 複数のデータセットに対応
     if dataset_name == 'iris':
         data = load_iris()
     elif dataset_name == 'wine':
@@ -36,15 +57,17 @@ def load_and_scale_dataset(dataset_name, method='standard'):
     elif dataset_name == 'diabetes':
         data = load_diabetes()
     elif dataset_name == 'moons':
-        data = make_moons(n_samples=500, noise=0.05)
+        data = make_moons(n_samples=500, noise=0.05, random_state=random_state)
     elif dataset_name == 'circles':
-        data = make_circles(n_samples=500, noise=0.05, factor=0.5)
+        data = make_circles(n_samples=500, noise=0.05,
+                            factor=0.5, random_state=random_state)
     elif dataset_name == 'blobs':
-        data = make_blobs(n_samples=500, centers=3, cluster_std=1.0)
+        data = make_blobs(n_samples=500, centers=3,
+                          cluster_std=1.0, random_state=random_state)
     elif dataset_name == 'high_dim':
         data = make_classification(n_samples=500, n_features=10,
                                    n_informative=8, n_redundant=2,
-                                   n_classes=2, random_state=42)
+                                   n_classes=2, random_state=random_state)
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
@@ -132,15 +155,14 @@ def create_quantum_encoding_circuit(qubits, data, method='amplitude'):
     return circuit
 
 
-def perform_qpca(qubits, circuits, num_iterations):
+def perform_qpca(circuits, num_iterations, simulator):
     """
     qPCAを実施し、エンコードされた量子データに対して次元削減を行います。
     """
-    config = load_config(CONFIG_PTAH)
+    config = load_config(CONFIG_PATH)
     config_print_eigenvalues = config.get('print_eigenvalues', False)
     config_print_eigenvectors = config.get('print_eigenvectors', False)
 
-    simulator = cirq.Simulator()
     density_matrices = []
     for circuit in circuits:
         state = simulator.simulate(circuit)
@@ -195,16 +217,25 @@ def calculate_contribution_ratios(eigenvalues, sorted_indices, num_components):
 
 def main():
     # 設定ファイルのパスを指定
-    config = load_config(CONFIG_PTAH)
+    config = load_config(CONFIG_PATH)
+
+    # シードの設定
+    seed = set_random_seed(config)
+
     dataset_names = config.get('dataset_name', 'iris').split(
         ',')   # ここを変更: データセット名を複数取得
     normalization_methods = config.get(
         'normalization_method', 'standard').split(',')
     encoding_methods = config.get('encoding_method', 'amplitude').split(',')
     config_print_circuit = config.get('print_circuit', False)
-    config_print_top_eingenvectors = config.get(
-        'print_top_eingenvectors', False)
-    config_print_clasical_data = config.get('print_clasical_data', False)
+    config_print_top_eigenvectors = config.get('print_top_eigenvectors', False)
+    config_print_classical_data = config.get('print_classical_data', False)
+
+    # Cirqのシミュレーターにシードを渡す（固定シードが必要な場合）
+    if seed is not None:
+        simulator = cirq.Simulator(seed=seed)
+    else:
+        simulator = cirq.Simulator()
 
     for dname in dataset_names:
         # データセットごとに処理
@@ -212,9 +243,7 @@ def main():
         for norm_method in normalization_methods:
             print(f"Testing with {norm_method} normalization:")
             scaled_data = load_and_scale_dataset(
-                dname.strip(), norm_method)  # ここを変更: 汎用化した関数を使用
-            # all_scaled_data = {norm_method: scaled_data}
-
+                dname.strip(), norm_method, random_state=seed if seed is not None else None)  # シードを渡す
             # 量子ビット準備
             num_qubits = scaled_data.shape[1]
             qubits = [cirq.LineQubit(i) for i in range(num_qubits)]
@@ -227,8 +256,13 @@ def main():
                     circuits.append(
                         create_quantum_encoding_circuit(qubits, data, method))
                     for _ in range(5):
-                        noisy_data = data + \
-                            np.random.normal(0, 0.005, data.shape)
+                        if seed is not None:
+                            # シードが固定されている場合、ノイズ生成も固定
+                            noise = np.random.default_rng(
+                                seed).normal(0, 0.005, data.shape)
+                        else:
+                            noise = np.random.normal(0, 0.005, data.shape)
+                        noisy_data = data + noise
                         noisy_data = np.clip(noisy_data, -1.0, 1.0)
                         noisy_data = np.nan_to_num(noisy_data)
                         circuits.append(create_quantum_encoding_circuit(
@@ -240,14 +274,14 @@ def main():
                         print(circuit)
 
                 top_eigenvectors, eigenvalues, sorted_indices = perform_qpca(
-                    qubits, circuits, num_iterations=2)
-                if config_print_top_eingenvectors:
+                    circuits, num_iterations=2, simulator=simulator)
+                if config_print_top_eigenvectors:
                     print("Top Eigenvectors after qPCA:")
                     print(top_eigenvectors)
 
                 decoded_data = decode_quantum_data(
                     top_eigenvectors, scaled_data)
-                if config_print_clasical_data:
+                if config_print_classical_data:
                     print("Decoded Classical Data:")
                     print(decoded_data)
 
