@@ -1,6 +1,6 @@
 # 注意：）複数選択をする場合，スペースを入れるとエラーが発生するので，スペースを入れないようにしてください．
-# dataset name: iris, wine, breast_cancer, digits, diabetes, moons, circles, blobs (複数選択可)
-dataset_name: moons
+# dataset name: iris, wine, breast_cancer, digits, diabetes, moons, circles, blobs, high_dim (複数選択可)
+dataset_name: high_dim
 
 # normalization_method: standard, minmax, robust (複数選択可)       
 normalization_method: standard

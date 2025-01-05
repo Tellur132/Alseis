@@ -2,7 +2,8 @@ import cirq
 import numpy as np
 import pandas as pd
 import yaml
-from sklearn.datasets import load_iris, load_wine, load_breast_cancer, load_digits, load_diabetes, make_moons, make_circles, make_blobs
+from sklearn.datasets import load_iris, load_wine, load_breast_cancer, load_digits, load_diabetes
+from sklearn.datasets import make_moons, make_circles, make_blobs, make_classification
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 from scipy.linalg import eigh
 
@@ -40,6 +41,10 @@ def load_and_scale_dataset(dataset_name, method='standard'):
         data = make_circles(n_samples=500, noise=0.05, factor=0.5)
     elif dataset_name == 'blobs':
         data = make_blobs(n_samples=500, centers=3, cluster_std=1.0)
+    elif dataset_name == 'high_dim':
+        data = make_classification(n_samples=500, n_features=10,
+                                   n_informative=8, n_redundant=2,
+                                   n_classes=2, random_state=42)
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
