@@ -16,13 +16,23 @@ print_circuit: False              # True or False
 print_eigenvalues: False          # True or False
 print_eigenvectors: False         # True or False
 print_top_eingenvectors: False    # True or False
-print_clasical_data: False        # True or False
+print_classical_data: False       # True or False
+print_classical_pca: False        # True or False
+
+perform_classical_pca: True      # True or False
+
+num_components: 2                 # 固有値で用いるコンポーネント数（int）
 
 plotting:
-  plot_original_data: true
-  plot_qpca_results: true
-  plot_eigenvalues: true
-  save_figures: true
+  plot_original_data: True
+  plot_qpca_results: True
+  plot_classical_pca_results: True
+  plot_eigenvalues: True
+  plot_pca_comparison: True
+  save_figures: True
   original_data_fig_path: "original_data.png"
   qpca_results_fig_path: "qpca_results.png"
+  classical_pca_results_fig_path: "classical_pca_results.png"
   eigenvalues_fig_path: "eigenvalues.png"
+  pca_comparison_eigenvalues_fig_path: "pca_comparison_eigenvalues.png"
+  pca_comparison_contribution_fig_path: "pca_comparison_contribution.png"

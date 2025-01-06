@@ -8,8 +8,8 @@ import seaborn as sns
 from sklearn.datasets import load_iris, load_wine, load_breast_cancer, load_digits, load_diabetes
 from sklearn.datasets import make_moons, make_circles, make_blobs, make_classification
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
-from scipy.linalg import eigh
 from sklearn.decomposition import PCA
+from scipy.linalg import eigh
 
 CONFIG_PATH = 'config.yaml'
 
@@ -188,10 +188,10 @@ def perform_qpca(circuits, num_iterations, simulator, config):
     eigenvectors = eigenvectors.real
 
     if config_print_eigenvalues:
-        print("Eigenvalues:")
+        print("qPCA Eigenvalues:")
         print(eigenvalues)
     if config_print_eigenvectors:
-        print("Eigenvectors:")
+        print("qPCA Eigenvectors:")
         print(eigenvectors)
 
     # 固有値が大きいものに基づいて次元削減
@@ -199,6 +199,27 @@ def perform_qpca(circuits, num_iterations, simulator, config):
     top_eigenvectors = eigenvectors[:, sorted_indices[:num_iterations]]
 
     return top_eigenvectors, eigenvalues, sorted_indices
+
+
+def perform_classical_pca(scaled_data, num_components=2, config=None):
+    """
+    古典的なPCAを実施し、次元削減を行います。
+    """
+    pca = PCA(n_components=num_components)
+    transformed_data = pca.fit_transform(scaled_data)
+    eigenvalues = pca.explained_variance_
+    components = pca.components_
+    contribution_ratios = pca.explained_variance_ratio_
+
+    if config and config.get('print_classical_pca', False):
+        print("Classical PCA Eigenvalues:")
+        print(eigenvalues)
+        print("Classical PCA Components:")
+        print(components)
+        print("Classical PCA Contribution Ratios:")
+        print(contribution_ratios)
+
+    return transformed_data, eigenvalues, components, contribution_ratios
 
 
 def decode_quantum_data(top_eigenvectors, scaled_data):
@@ -314,33 +335,154 @@ def plot_qpca_results(decoded_data, labels, dataset_name, config):
     plt.close()
 
 
-def plot_eigenvalues(eigenvalues, sorted_indices, dataset_name, config):
+def plot_classical_pca_results(classical_pca_data, labels, dataset_name, config):
+    """
+    古典PCA後の低次元データをプロットします。
+    """
+    plot_config = config.get('plotting', {})
+    plot_classical_pca = plot_config.get('plot_classical_pca_results', False)
+    save_fig = plot_config.get('save_figures', False)
+    fig_path = plot_config.get('classical_pca_results_fig_path', f"{
+                               dataset_name}_classical_pca_results.png")
+
+    if not plot_classical_pca:
+        return
+
+    if classical_pca_data.shape[1] > 2:
+        pca = PCA(n_components=2)
+        data_2d = pca.fit_transform(classical_pca_data)
+        title = f"{dataset_name} Classical PCA Results (PCA Reduced to 2D)"
+    else:
+        data_2d = classical_pca_data
+        title = f"{dataset_name} Classical PCA Results"
+
+    # 実数部分のみを使用
+    data_2d = data_2d.real
+
+    plt.figure(figsize=(8, 6))
+    if labels is not None:
+        unique_labels = np.unique(labels)
+        palette = sns.color_palette("hsv", len(unique_labels))
+        sns.scatterplot(x=data_2d[:, 0], y=data_2d[:, 1],
+                        hue=labels, palette=palette, legend='full')
+    else:
+        sns.scatterplot(x=data_2d[:, 0], y=data_2d[:, 1])
+    plt.title(title)
+    plt.xlabel("Component 1")
+    plt.ylabel("Component 2")
+    plt.tight_layout()
+    if save_fig:
+        plt.savefig(fig_path)
+        print(f"Classical PCA results plot saved to {fig_path}")
+    else:
+        plt.show()
+    plt.close()
+
+
+def plot_eigenvalues(eigenvalues, dataset_name, config, method='qPCA'):
     """
     固有値をプロットし、寄与率を視覚化します。
+    method: 'qPCA' または 'Classical PCA'
     """
     plot_config = config.get('plotting', {})
     plot_eigen = plot_config.get('plot_eigenvalues', False)
     save_fig = plot_config.get('save_figures', False)
     fig_path = plot_config.get('eigenvalues_fig_path', f"{
-                               dataset_name}_eigenvalues.png")
+                               dataset_name}_eigenvalues_{method}.png")
 
     if not plot_eigen:
         return
 
-    sorted_eigenvalues = eigenvalues[sorted_indices]
+    num_components = len(eigenvalues)
+    sorted_eigenvalues = eigenvalues  # 既にソート済み
+
     plt.figure(figsize=(8, 6))
 
-    # paletteを使用せず、colorパラメータを使用
-    sns.barplot(x=np.arange(1, len(sorted_eigenvalues)+1),
+    sns.barplot(x=np.arange(1, num_components + 1),
                 y=sorted_eigenvalues, color="skyblue")
 
-    plt.title(f"{dataset_name} Eigenvalues (Sorted)")
+    plt.title(f"{dataset_name} {method} Eigenvalues (Sorted)")
     plt.xlabel("Component")
     plt.ylabel("Eigenvalue")
     plt.tight_layout()
     if save_fig:
         plt.savefig(fig_path)
-        print(f"Eigenvalues plot saved to {fig_path}")
+        print(f"{method} Eigenvalues plot saved to {fig_path}")
+    else:
+        plt.show()
+    plt.close()
+
+
+def plot_pca_comparison(qpca_eigenvalues,
+                        classical_eigenvalues,
+                        qpca_contribution,
+                        classical_contribution,
+                        dataset_name, config):
+    """
+    qPCAと古典PCAの固有値および寄与率を比較してプロットします。
+    """
+    plot_config = config.get('plotting', {})
+    plot_pca_comparison_flag = plot_config.get('plot_pca_comparison', False)
+    save_fig = plot_config.get('save_figures', False)
+    fig_path_eigen = plot_config.get('pca_comparison_eigenvalues_fig_path', f"{
+                                     dataset_name}_pca_comparison_eigenvalues.png")
+    fig_path_contribution = plot_config.get('pca_comparison_contribution_fig_path', f"{
+                                            dataset_name}_pca_comparison_contribution.png")
+
+    if not plot_pca_comparison_flag:
+        return
+
+    num_components = len(qpca_eigenvalues)  # qPCAと古典PCAのコンポーネント数が一致している前提
+
+    # 固有値の比較: 上位num_componentsのみ
+    sorted_qpca_eigenvalues = qpca_eigenvalues
+    sorted_classical_eigenvalues = classical_eigenvalues
+
+    plt.figure(figsize=(10, 6))
+    width = 0.35  # バーの幅
+    indices = np.arange(num_components)
+
+    plt.bar(indices - width/2, sorted_qpca_eigenvalues,
+            width=width, label='qPCA', color='skyblue')
+    plt.bar(indices + width/2, sorted_classical_eigenvalues,
+            width=width, label='Classical PCA', color='salmon')
+
+    plt.title(f"{dataset_name} PCA Comparison of Eigenvalues")
+    plt.xlabel("Component")
+    plt.ylabel("Eigenvalue")
+    plt.xticks(indices, [f'PC{i+1}' for i in range(num_components)])
+    plt.legend()
+    plt.tight_layout()
+    if save_fig:
+        plt.savefig(fig_path_eigen)
+        print(f"PCA comparison Eigenvalues plot saved to {fig_path_eigen}")
+    else:
+        plt.show()
+    plt.close()
+
+    # 寄与率の比較: 上位num_componentsのみ
+    sorted_qpca_contribution = qpca_contribution
+    sorted_classical_contribution = classical_contribution
+
+    plt.figure(figsize=(10, 6))
+    width = 0.35  # バーの幅
+    indices = np.arange(num_components)
+
+    plt.bar(indices - width/2, sorted_qpca_contribution,
+            width=width, label='qPCA', color='skyblue')
+    plt.bar(indices + width/2, sorted_classical_contribution,
+            width=width, label='Classical PCA', color='salmon')
+
+    plt.title(f"{dataset_name} PCA Comparison of Contribution Ratios")
+    plt.xlabel("Component")
+    plt.ylabel("Contribution Ratio")
+    plt.xticks(indices, [f'PC{i+1}' for i in range(num_components)])
+    plt.legend()
+    plt.tight_layout()
+    if save_fig:
+        plt.savefig(fig_path_contribution)
+        print(f"PCA comparison Contribution Ratios plot saved to {
+              fig_path_contribution}")
     else:
         plt.show()
     plt.close()
@@ -367,6 +509,8 @@ def main():
         simulator = cirq.Simulator(seed=seed)
     else:
         simulator = cirq.Simulator()
+
+    num_components = config.get('num_components', 2)  # 追加
 
     for dname in dataset_names:
         # データセットごとに処理
@@ -405,7 +549,7 @@ def main():
                         print(circuit)
 
                 top_eigenvectors, eigenvalues, sorted_indices = perform_qpca(
-                    circuits, num_iterations=2, simulator=simulator, config=config)
+                    circuits, num_iterations=num_components, simulator=simulator, config=config)
                 if config_print_top_eigenvectors:
                     print("Top Eigenvectors after qPCA:")
                     print(top_eigenvectors)
@@ -417,9 +561,23 @@ def main():
                     print(decoded_data)
 
                 contribution_table = calculate_contribution_ratios(
-                    eigenvalues, sorted_indices, num_components=2)
-                print("Contribution Ratios Table:")
+                    eigenvalues, sorted_indices, num_components=num_components)
+                print("qPCA Contribution Ratios Table:")
                 print(contribution_table)
+
+                # 古典PCAの実施
+                perform_classical_pca_flag = config.get(
+                    'perform_classical_pca', False)
+                if perform_classical_pca_flag:
+                    classical_pca_data, classical_eigenvalues, classical_components, classical_contribution_ratios = perform_classical_pca(
+                        scaled_data, num_components=num_components, config=config)
+                    classical_contribution_table = pd.DataFrame({
+                        'Component': [f'PC{i+1}' for i in range(len(classical_contribution_ratios))],
+                        'Eigenvalue': classical_eigenvalues,
+                        'Contribution Ratio': classical_contribution_ratios
+                    })
+                    print("Classical PCA Contribution Ratios Table:")
+                    print(classical_contribution_table)
 
                 # プロットの生成
                 plotting_methods = config.get('plotting', {})
@@ -429,9 +587,26 @@ def main():
                 if plotting_methods.get('plot_qpca_results', False):
                     plot_qpca_results(decoded_data, labels,
                                       dname.strip(), config)
+                if plotting_methods.get('plot_classical_pca_results', False) and perform_classical_pca_flag:
+                    plot_classical_pca_results(classical_pca_data, labels,
+                                               dname.strip(), config)
                 if plotting_methods.get('plot_eigenvalues', False):
                     plot_eigenvalues(
-                        eigenvalues, sorted_indices, dname.strip(), config)
+                        eigenvalues[sorted_indices][:num_components], dname.strip(), config, method='qPCA')
+                    if perform_classical_pca_flag:
+                        plot_eigenvalues(
+                            classical_eigenvalues[np.argsort(classical_eigenvalues)[
+                                ::-1]][:num_components],
+                            dname.strip(), config, method='Classical PCA')
+                if plotting_methods.get('plot_pca_comparison', False) and perform_classical_pca_flag:
+                    # 固有値と寄与率を上位num_componentsに限定して比較プロットを作成
+                    plot_pca_comparison(
+                        eigenvalues[sorted_indices][:num_components],
+                        classical_eigenvalues[np.argsort(classical_eigenvalues)[
+                            ::-1]][:num_components],
+                        contribution_table['Contribution Ratio'].values[:num_components],
+                        classical_contribution_ratios[:num_components],
+                        dname.strip(), config)
 
                 print("\n")  # エンコード方法間の区切り
             print("\n")  # 正規化方法間の区切り
