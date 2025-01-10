@@ -163,42 +163,113 @@ def create_quantum_encoding_circuit(qubits, data, method='amplitude'):
     return circuit
 
 
-def perform_qpca(circuits, num_iterations, simulator, config):
+def create_qpe_circuit(qubits, unitary, ancilla_qubits, num_ancilla):
     """
-    qPCAを実施し、エンコードされた量子データに対して次元削減を行います。
+    QPE回路を作成します。
+    qubits: エンコードされたデータ用の量子ビット
+    unitary: 固有値を推定するユニタリ演算子
+    ancilla_qubits: QPE用の補助量子ビット
+    num_ancilla: QPEに使用する補助量子ビットの数
+    """
+    circuit = cirq.Circuit()
+    # 初期化（補助量子ビットを|+>状態にする）
+    circuit.append([cirq.H(q) for q in ancilla_qubits])
+
+    # ユニタリ演算子を補助量子ビットに制御して適用
+    for i in range(num_ancilla):
+        exponent = 2**i
+        controlled_unitary = cirq.ControlledGate(unitary ** exponent)
+        circuit.append(controlled_unitary.on(ancilla_qubits[i], qubits[0]))
+
+    # 逆フーリエ変換
+    circuit.append(cirq.inverse(cirq.qft(*ancilla_qubits)))
+
+    # 測定
+    circuit.append([cirq.measure(q, key=f'm{idx}')
+                   for idx, q in enumerate(ancilla_qubits)])
+
+    return circuit
+
+
+def get_unitary_from_density_matrix(density_matrix):
+    """
+    密度行列からユニタリ演算子を構築します。
+    簡易的な例として、密度行列の固有値に基づく回転ゲートを使用します。
+    """
+    eigenvalues, eigenvectors = eigh(density_matrix)
+    # 最も大きな固有値に対応するユニタリ演算子を選択
+    principal_eigenvalue = eigenvalues[-1]
+    principal_eigenvector = eigenvectors[:, -1]
+
+    # 単一量子ビットの回転ゲートを例として使用
+    theta = principal_eigenvalue * 2 * np.pi
+    unitary = cirq.ry(theta)
+
+    return unitary, principal_eigenvector
+
+
+def perform_qpca_qpe(circuits, num_iterations, simulator, config):
+    """
+    qPCAをQPEを用いて実施し、エンコードされた量子データに対して次元削減を行います。
     """
     config_print_eigenvalues = config.get('print_eigenvalues', False)
     config_print_eigenvectors = config.get('print_eigenvectors', False)
 
     density_matrices = []
     for circuit in circuits:
-        state = simulator.simulate(circuit)
-        density_matrix = np.outer(
-            state.final_state_vector, np.conj(state.final_state_vector))
+        result = simulator.simulate(circuit)
+        state = result.final_state_vector
+        density_matrix = np.outer(state, np.conj(state))
         density_matrices.append(density_matrix)
 
     # 全ての密度行列を平均して最終的な密度行列を作成
     avg_density_matrix = np.mean(density_matrices, axis=0)
 
-    # 固有値と固有ベクトルを計算（qPCAの中心的な部分）
-    eigenvalues, eigenvectors = eigh(avg_density_matrix)
+    # ユニタリ演算子と固有ベクトルを取得
+    unitary, principal_eigenvector = get_unitary_from_density_matrix(
+        avg_density_matrix)
 
-    # 実数部分のみを使用
-    eigenvalues = eigenvalues.real
-    eigenvectors = eigenvectors.real
+    # 補助量子ビットの数（精度に影響）
+    num_ancilla = num_iterations  # 例として主成分数を使用
+
+    # 補助量子ビットを定義
+    ancilla_qubits = [cirq.LineQubit(i) for i in range(num_ancilla)]
+    data_qubit = cirq.LineQubit(num_ancilla)
+
+    # QPE回路の作成
+    qpe_circuit = create_qpe_circuit(
+        [data_qubit], unitary, ancilla_qubits, num_ancilla)
+
+    if config.get('print_circuit', False):
+        print("Quantum Phase Estimation Circuit:")
+        print(qpe_circuit)
+
+    # シミュレーション
+    result = simulator.run(qpe_circuit, repetitions=1)
+
+    # 測定結果の解析
+    eigenvalue_bits = [result.measurements[f'm{
+        idx}'][0][0] for idx in range(num_ancilla)]
+    eigenvalue = 0
+    for bit in eigenvalue_bits:
+        eigenvalue = (eigenvalue << 1) | bit
+    estimated_eigenvalue = eigenvalue / (2**num_ancilla)
 
     if config_print_eigenvalues:
-        print("qPCA Eigenvalues:")
-        print(eigenvalues)
-    if config_print_eigenvectors:
-        print("qPCA Eigenvectors:")
-        print(eigenvectors)
+        print("Estimated Eigenvalue from QPE:")
+        print(estimated_eigenvalue)
 
-    # 固有値が大きいものに基づいて次元削減
+    # 固有ベクトルの取得（クラシカルに取得）
+    eigenvalues, eigenvectors = eigh(avg_density_matrix)
     sorted_indices = np.argsort(eigenvalues)[::-1]
     top_eigenvectors = eigenvectors[:, sorted_indices[:num_iterations]]
+    top_eigenvalues = eigenvalues[sorted_indices[:num_iterations]]
 
-    return top_eigenvectors, eigenvalues, sorted_indices
+    if config_print_eigenvectors:
+        print("Top Eigenvectors after qPCA:")
+        print(top_eigenvectors)
+
+    return top_eigenvectors, top_eigenvalues, sorted_indices
 
 
 def perform_classical_pca(scaled_data, num_components=2, config=None):
@@ -232,18 +303,28 @@ def decode_quantum_data(top_eigenvectors, scaled_data):
     return reduced_data
 
 
-def calculate_contribution_ratios(eigenvalues, sorted_indices, num_components):
+def calculate_contribution_ratios(eigenvalues, num_components):
     """
     寄与率を計算し、各主成分の寄与率の表を作成します。
     """
     total_variance = np.sum(eigenvalues)
-    selected_eigenvalues = eigenvalues[sorted_indices[:num_components]]
+    num_available = len(eigenvalues)
+    num_selected = min(num_components, num_available)  # 利用可能な固有値数に制限
+
+    if num_selected < num_components:
+        print(f"Warning: Requested num_components={num_components} exceeds available eigenvalues={
+              num_available}. Adjusting to {num_selected}.")
+
+    # sorted_indicesを使用せず、先頭のnum_selectedを取得
+    selected_eigenvalues = eigenvalues[:num_selected]
     contribution_ratios = selected_eigenvalues / total_variance
+
     contribution_table = pd.DataFrame({
-        'Component': [f'PC{i+1}' for i in range(num_components)],
+        'Component': [f'PC{i+1}' for i in range(num_selected)],
         'Eigenvalue': selected_eigenvalues,
         'Contribution Ratio': contribution_ratios
     })
+
     return contribution_table
 
 
@@ -495,8 +576,8 @@ def main():
     # シードの設定
     seed = set_random_seed(config)
 
-    dataset_names = config.get('dataset_name', 'iris').split(
-        ',')   # ここを変更: データセット名を複数取得
+    dataset_names = config.get(
+        'dataset_name', 'iris').split(',')   # 複数データセット対応
     normalization_methods = config.get(
         'normalization_method', 'standard').split(',')
     encoding_methods = config.get('encoding_method', 'amplitude').split(',')
@@ -510,7 +591,7 @@ def main():
     else:
         simulator = cirq.Simulator()
 
-    num_components = config.get('num_components', 2)  # 追加
+    desired_num_components = config.get('num_components', 2)  # 追加
 
     for dname in dataset_names:
         # データセットごとに処理
@@ -548,20 +629,29 @@ def main():
                         print(f"Quantum Encoding Circuit for sample {i}:")
                         print(circuit)
 
-                top_eigenvectors, eigenvalues, sorted_indices = perform_qpca(
-                    circuits, num_iterations=num_components, simulator=simulator, config=config)
+                # qPCAをQPEを用いて実行
+                top_eigenvectors, top_eigenvalues, sorted_indices = perform_qpca_qpe(
+                    circuits, num_iterations=desired_num_components, simulator=simulator, config=config)
                 if config_print_top_eigenvectors:
+                    print("Top Eigenvalues after qPCA (QPE):")
+                    print(top_eigenvalues)
                     print("Top Eigenvectors after qPCA:")
                     print(top_eigenvectors)
 
+                # デコードされたデータを取得
                 decoded_data = decode_quantum_data(
                     top_eigenvectors, scaled_data)
                 if config_print_classical_data:
                     print("Decoded Classical Data:")
                     print(decoded_data)
 
+                # 固有値の数に応じてnum_componentsを調整
+                actual_num_components = min(
+                    desired_num_components, len(top_eigenvalues))
+
                 contribution_table = calculate_contribution_ratios(
-                    eigenvalues, sorted_indices, num_components=num_components)
+                    top_eigenvalues, num_components=actual_num_components)
+
                 print("qPCA Contribution Ratios Table:")
                 print(contribution_table)
 
@@ -570,11 +660,14 @@ def main():
                     'perform_classical_pca', False)
                 if perform_classical_pca_flag:
                     classical_pca_data, classical_eigenvalues, classical_components, classical_contribution_ratios = perform_classical_pca(
-                        scaled_data, num_components=num_components, config=config)
+                        scaled_data, num_components=desired_num_components, config=config)
+                    # 古典PCAの固有値数を調整
+                    actual_classical_num_components = min(
+                        desired_num_components, len(classical_eigenvalues))
                     classical_contribution_table = pd.DataFrame({
-                        'Component': [f'PC{i+1}' for i in range(len(classical_contribution_ratios))],
-                        'Eigenvalue': classical_eigenvalues,
-                        'Contribution Ratio': classical_contribution_ratios
+                        'Component': [f'PC{i+1}' for i in range(actual_classical_num_components)],
+                        'Eigenvalue': classical_eigenvalues[:actual_classical_num_components],
+                        'Contribution Ratio': classical_contribution_ratios[:actual_classical_num_components]
                     })
                     print("Classical PCA Contribution Ratios Table:")
                     print(classical_contribution_table)
@@ -588,24 +681,26 @@ def main():
                     plot_qpca_results(decoded_data, labels,
                                       dname.strip(), config)
                 if plotting_methods.get('plot_classical_pca_results', False) and perform_classical_pca_flag:
-                    plot_classical_pca_results(classical_pca_data, labels,
-                                               dname.strip(), config)
+                    plot_classical_pca_results(
+                        classical_pca_data, labels, dname.strip(), config)
                 if plotting_methods.get('plot_eigenvalues', False):
                     plot_eigenvalues(
-                        eigenvalues[sorted_indices][:num_components], dname.strip(), config, method='qPCA')
+                        top_eigenvalues[:actual_num_components], dname.strip(), config, method='qPCA')
                     if perform_classical_pca_flag:
+                        sorted_classical_eigenvalues = np.sort(
+                            classical_eigenvalues)[::-1]
                         plot_eigenvalues(
-                            classical_eigenvalues[np.argsort(classical_eigenvalues)[
-                                ::-1]][:num_components],
+                            sorted_classical_eigenvalues[:actual_num_components],
                             dname.strip(), config, method='Classical PCA')
                 if plotting_methods.get('plot_pca_comparison', False) and perform_classical_pca_flag:
                     # 固有値と寄与率を上位num_componentsに限定して比較プロットを作成
+                    sorted_classical_eigenvalues = np.sort(
+                        classical_eigenvalues)[::-1]
                     plot_pca_comparison(
-                        eigenvalues[sorted_indices][:num_components],
-                        classical_eigenvalues[np.argsort(classical_eigenvalues)[
-                            ::-1]][:num_components],
-                        contribution_table['Contribution Ratio'].values[:num_components],
-                        classical_contribution_ratios[:num_components],
+                        top_eigenvalues[:actual_num_components],
+                        sorted_classical_eigenvalues[:actual_num_components],
+                        contribution_table['Contribution Ratio'].values[:actual_num_components],
+                        classical_contribution_ratios[:actual_num_components],
                         dname.strip(), config)
 
                 print("\n")  # エンコード方法間の区切り

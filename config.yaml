@@ -29,7 +29,7 @@ plotting:
   plot_classical_pca_results: True
   plot_eigenvalues: True
   plot_pca_comparison: True
-  save_figures: False
+  save_figures: True
   original_data_fig_path: "original_data.png"
   qpca_results_fig_path: "qpca_results.png"
   classical_pca_results_fig_path: "classical_pca_results.png"
