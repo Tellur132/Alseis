@@ -112,36 +112,6 @@ def load_and_scale_dataset(dataset_name, method='standard', random_state=None):
 # 3. データを量子回路へエンコードする関数
 # =============================================================================
 
-def create_qrac_state_2to1(qubit: cirq.LineQubit, b1: int, b2: int) -> cirq.Circuit:
-    """
-    2つの古典ビット(b1, b2)を1量子ビットにエンコードする
-    2-to-1 QRAC 回路を返す。
-
-    状態:
-      (b1,b2) に応じて Bloch 球の赤道上で90°刻みの位置に配置。
-      θ = (2*b1 + b2) * (π/2)
-
-    生成される状態 |ψ_{b1,b2}> は
-      (|0> + e^{iθ}|1>) / √2
-    となる。
-
-    Returns:
-      量子回路 (cirq.Circuit)
-    """
-    circuit = cirq.Circuit()
-
-    # 初期状態: |0>
-    # Step1: Hゲートで |+> = (|0> + |1>)/sqrt{2} を生成
-    circuit.append(cirq.H(qubit))
-
-    # Step2: Rz(θ)
-    # θ は 4パターン: 0, π/2, π, 3π/2
-    theta = (2 * b1 + b2) * (np.pi / 2)
-    circuit.append(cirq.rz(theta)(qubit))
-
-    return circuit
-
-
 def create_quantum_encoding_circuit(qubits, data, method='amplitude'):
     """
     データを量子状態にエンコードするための回路を作成。
@@ -165,22 +135,29 @@ def create_quantum_encoding_circuit(qubits, data, method='amplitude'):
             if i < len(qubits):
                 circuit.append(cirq.rx(val_norm)(qubits[i]))
     elif method == 'qrac':
-        # 2-to-1 QRACの実装
+        # 2ビットを1量子ビットに詰め込む例
         for i in range(0, len(data), 2):
             if i + 1 < len(data):
-                bit1 = int(data[i] > 0)  # 閾値を0としてビット化
-                bit2 = int(data[i+1] > 0)
+                x1 = data[i]
+                x2 = data[i+1]
+                x1 = (x1 - np.min(data)) / \
+                    (np.max(data) - np.min(data) + 1e-10) * 2 - 1.0
+                x2 = (x2 - np.min(data)) / \
+                    (np.max(data) - np.min(data) + 1e-10) * 2 - 1.0
+                angle_y = np.arccos(x1)
+                angle_z = np.arccos(x2)
                 if i // 2 < len(qubits):
-                    qr = create_qrac_state_2to1(qubits[i // 2], bit1, bit2)
-                    circuit += qr
+                    circuit.append(cirq.ry(2 * angle_y)(qubits[i // 2]))
+                    circuit.append(cirq.rz(2 * angle_z)(qubits[i // 2]))
             else:
-                # データが奇数の場合は余ったビットをエンコード
-                bit = int(data[i] > 0)
+                # 余る場合
+                val = data[i]
+                val = (val - np.min(data)) / \
+                    (np.max(data) - np.min(data) + 1e-10) * 2 - 1.0
+                angle = 2 * np.arccos(val)
                 if i // 2 < len(qubits):
-                    if bit == 1:
-                        circuit.append(cirq.X(qubits[i // 2]))
+                    circuit.append(cirq.ry(angle)(qubits[i // 2]))
     elif method == 'amplitude':
-        # 非推奨
         # 簡易的な amplitude encoding (正規化してRyに対応させる程度)
         # 本来はベクトル全体を正規化してエンコードするが，ここではサンプルとして
         for i, value in enumerate(data):
@@ -196,7 +173,7 @@ def create_quantum_encoding_circuit(qubits, data, method='amplitude'):
 
 
 # =============================================================================
-# 4. ブロックエンコードによる e^{i rho t} を作りQPEする関数群
+# 4. （前半コード）ブロックエンコードによる e^{i rho t} を作りQPEする関数群
 # =============================================================================
 
 def create_exp_i_rho_t_gate(rho, t):
@@ -492,62 +469,109 @@ def calculate_contribution_ratios_from_qpe(eigenvalues_list):
     return df
 
 
-def perform_qpca_quantum_rho_classical_eigs(scaled_data, simulator, config):
-    """
-    1. 多数サンプルから量子回路を使って密度行列 rho を作る (quantum encoding)
-    2. その rho を古典的に固有値分解し，寄与率を計算して返す
-    """
-    n_features = scaled_data.shape[1]
-    n_qubits = int(np.log2(n_features))
-    if 2**n_qubits != n_features:
-        raise ValueError("特徴量数が 2^n である必要があります。")
+# =============================================================================
+# 5. （後半コード）簡易ユニタリを用いた qPCA + QPE
+# =============================================================================
 
-    # --- 1) 量子回路で密度行列 rho を作る ---
-    rho = np.zeros((n_features, n_features), dtype=complex)
-    qubits_for_data = [cirq.LineQubit(i) for i in range(n_qubits)]
 
-    for sample in scaled_data:
-        # 量子エンコード
-        circuit = create_quantum_encoding_circuit(
-            qubits_for_data,
-            sample,
-            method=config.get('encoding_method', 'amplitude')
-        )
+def get_unitary_from_density_matrix(density_matrix):
+    """
+    密度行列から「単一量子ビットの回転ゲート」としてユニタリを構成する（非常に簡易的な例）。
+    """
+    eigenvalues, eigenvectors = eigh(density_matrix)
+    # 最大固有値（principal component）だけを見て回転角を決める
+    principal_eigenvalue = eigenvalues[-1]
+    # 実際は多ビットの場合は行列サイズ分のユニタリが必要になるが，ここではサンプルとして1量子ビット例
+    theta = principal_eigenvalue * 2 * np.pi
+    unitary = cirq.ry(theta)
+    return unitary
+
+
+def create_qpe_circuit_simple(qubits, unitary, ancilla_qubits, num_ancilla):
+    """
+    簡易的な1量子ビットユニタリを制御してQPEを行う例。
+    qubits: データ用量子ビット（1量子ビット想定）
+    unitary: 単一ビットのユニタリ（cirq.Gate）
+    ancilla_qubits: QPE用の補助量子ビット
+    num_ancilla: 補助量子ビットの数
+    """
+    circuit = cirq.Circuit()
+    # 初期化（補助量子ビットを|+>に）
+    circuit.append([cirq.H(q) for q in ancilla_qubits])
+
+    # ユニタリを 2^i 回適用 (制御付き)
+    for i in range(num_ancilla):
+        exponent = 2**i
+        controlled_unitary = cirq.ControlledGate(unitary ** exponent)
+        # qubits[0] に作用させる
+        circuit.append(controlled_unitary.on(ancilla_qubits[i], qubits[0]))
+
+    # 逆QFT
+    circuit.append(cirq.inverse(cirq.qft(*ancilla_qubits)))
+
+    # 測定
+    circuit.append([cirq.measure(q, key=f'm{idx}')
+                   for idx, q in enumerate(ancilla_qubits)])
+    return circuit
+
+
+def perform_qpca_qpe_simple(circuits, num_iterations, simulator, config):
+    """
+    (後半コードの方式)
+    - 各サンプル回路をシミュレートして density matrix を作り，
+    - その平均を取り，最大固有値に対応する 1量子ビット回転ゲートを作成
+    - QPEで位相推定（あくまで1量子ビットユニタリの例）
+    """
+    density_matrices = []
+    for circuit in circuits:
         result = simulator.simulate(circuit)
         state = result.final_state_vector
-        dm = np.outer(state, np.conjugate(state))
-        rho += dm
+        dm = np.outer(state, np.conj(state))
+        density_matrices.append(dm)
 
-    rho /= len(scaled_data)
+    avg_density_matrix = np.mean(density_matrices, axis=0)
 
-    # --- 2) 古典的に固有値分解（= rho の対角化）---
-    #       ここで eigh を使えばOK
-    classical_eigvals, classical_eigvecs = eigh(rho)
-    # 大きい順にソート
-    sort_idx = np.argsort(classical_eigvals)[::-1]
-    classical_eigvals_sorted = classical_eigvals[sort_idx]
-    classical_eigvecs_sorted = classical_eigvecs[:, sort_idx]
+    # 単一量子ビットのユニタリを取得
+    unitary = get_unitary_from_density_matrix(avg_density_matrix)
 
-    # --- 3) 寄与率を計算 ---
-    #     （rho のトレースは1 になるように作っているはずなので，
-    #       ここでは固有値がそのまま「分散」に相当するとみなし，寄与率を計算）
-    total = np.sum(classical_eigvals_sorted)
-    if total < 1e-12:
-        total = 1e-12  # 0除算防止
+    num_ancilla = num_iterations
+    ancilla_qubits = [cirq.LineQubit(i) for i in range(num_ancilla)]
+    data_qubit = cirq.LineQubit(num_ancilla)  # 1量子ビット想定
 
-    contribution_ratios = classical_eigvals_sorted / total
+    qpe_circuit = create_qpe_circuit_simple(
+        [data_qubit], unitary, ancilla_qubits, num_ancilla)
 
-    # 必要に応じてテーブル表示などする
+    if config.get('print_circuit', False):
+        print("=== QPE Circuit (simple) ===")
+        print(qpe_circuit)
+
+    # シミュレーション
+    # repetitions=1 だと統計が出ないので，必要なら増やす
+    result = simulator.run(qpe_circuit, repetitions=1)
+
+    # 測定結果から位相推定
+    eigenvalue_bits = [result.measurements[f'm{
+        idx}'][0][0] for idx in range(num_ancilla)]
+    eigenvalue = 0
+    for bit in eigenvalue_bits:
+        eigenvalue = (eigenvalue << 1) | bit
+    estimated_eigenvalue = eigenvalue / (2**num_ancilla)
+
     if config.get('print_eigenvalues', False):
-        print("=== Quantum ρ -> Classical Eigs ===")
-        for i, (val, ratio) in enumerate(zip(classical_eigvals_sorted, contribution_ratios)):
-            print(f"Eig#{i+1}: {val:.6f}, Contribution Ratio = {ratio:.6f}")
+        print("=== QPE (simple) Estimated Eigenvalue ===")
+        print(estimated_eigenvalue)
 
-    return classical_eigvals_sorted, classical_eigvecs_sorted, contribution_ratios, rho
+    # クラシカルに平均密度行列を固有値分解
+    eigenvalues, eigenvectors = eigh(avg_density_matrix)
+    sorted_indices = np.argsort(eigenvalues)[::-1]
+    top_eigenvalues = eigenvalues[sorted_indices[:num_iterations]]
+    top_eigenvectors = eigenvectors[:, sorted_indices[:num_iterations]]
+
+    return top_eigenvectors, top_eigenvalues
 
 
 # =============================================================================
-# 5. 古典PCA & 可視化関連
+# 6. 古典PCA & 可視化関連
 # =============================================================================
 
 def perform_classical_pca(scaled_data, num_components=2, config=None):
@@ -825,12 +849,8 @@ def plot_pca_comparison(qpca_eigenvalues,
 
 
 # =============================================================================
-# 6. メイン関数
+# 7. メイン関数
 # =============================================================================
-
-
-# 他の必要なインポートもここに
-
 
 def main():
     # 1. 設定ファイル読み込み
@@ -849,11 +869,9 @@ def main():
         'normalization_method', 'standard').split(',')
     encoding_methods = config.get('encoding_method', 'amplitude').split(',')
     desired_num_components = config.get('num_components', 2)
-    qpca_mode = config.get('qpca_mode', 'block')  # 'block' or 'block_all' など
+    qpca_mode = config.get('qpca_mode', 'block')   # 'block' or 'simple' など
 
-    print(encoding_methods)
-
-    # 3. 各データセット × 各正規化 に対し処理
+    # 3. 各データセット × 各正規化 × 各エンコード手法 に対し処理
     for dname in dataset_names:
         dname = dname.strip()
         print(f"\n=== Dataset: {dname} ===")
@@ -861,128 +879,115 @@ def main():
             norm_method = norm_method.strip()
             print(f"Normalization: {norm_method}")
             scaled_data, labels = load_and_scale_dataset(
-                dname, norm_method, random_state=seed if seed is not None else None
-            )
+                dname, norm_method, random_state=seed if seed is not None else None)
 
-            # 4. モードに応じて qPCA を実行
+            # 4. モードに応じて「ブロックエンコード版 qPCA」or「簡易版 qPCA」などを実行
             if qpca_mode == 'block':
-                # 通常のブロックエンコード版
+                # print("Mode: qPCA (block-encoding)")
+                # ----- ブロックエンコード方式 -----
                 classical_eigvals_sorted, lambda_est, rho = perform_qpca_qpe_blockencoding(
                     scaled_data, simulator, config
                 )
-                print("[INFO] QPE (block-encoding) finished.")
+                # ここでは主に固有値を取得（固有ベクトルはブロックエンコード方式では大きい行列）
+                top_eigenvalues = classical_eigvals_sorted[:desired_num_components]
 
+                # クラシカルPCAや可視化をしたい場合は，
+                # qPCAによる「データ射影」をどう実装するか別途検討が必要。
+                # （ブロックエンコード方式だと固有ベクトルの抽出が大規模行列になるため簡易実装は省略）
+
+                # 一応固有値の簡易プロット
+                if config.get('plotting', {}).get('plot_eigenvalues', False):
+                    plot_eigenvalues(
+                        top_eigenvalues,
+                        dname, config, method='qPCA(block-encoding)'
+                    )
+
+            # 量子だけで全固有値を求める！
             elif qpca_mode == 'block_all':
-                # 全固有値推定
                 eigenvalues_list, rho = perform_qpca_qpe_blockencoding_all_eigs(
                     scaled_data, simulator, config
                 )
-                print("\n[INFO] QPE (block-encoding, all eigenvalues) finished.")
 
-                # 1) 寄与率テーブルの表示
+                # 寄与率を計算
                 contrib_df = calculate_contribution_ratios_from_qpe(
                     eigenvalues_list)
-                print("\n[QPE Contribution Ratios Table]")
+                print("\nQPE (All Eigs) Contribution Ratios Table:")
                 print(contrib_df)
 
-                # 2) グラフ用のデータ準備
-                qpca_lams = np.array([lam for (lam, p) in eigenvalues_list])
-                qpca_probs = np.array([p for (lam, p) in eigenvalues_list])
-                sort_idx = np.argsort(qpca_lams)[::-1]
-                qpca_lams = qpca_lams[sort_idx]
-                qpca_probs = qpca_probs[sort_idx]
-
-                sum_probs = np.sum(qpca_probs)
-                if sum_probs < 1e-12:
-                    sum_probs = 1.0  # 0割り防止
-                qpca_contribution = qpca_probs / sum_probs
-
-                # 固有値バー図のプロット
-                if config.get('plotting', {}).get('plot_eigenvalues', False):
-                    plot_eigenvalues(
-                        qpca_lams,
-                        dname, config, method='qPCA(block_all)'
+            elif qpca_mode == 'simple':
+                # ----- 簡易1量子ビットユニタリ方式 -----
+                # データをエンコードする回路群を作成
+                # （サンプルの数だけ回路を作り，追加でノイズを混ぜたりなど）
+                circuits = []
+                for data_point in scaled_data:
+                    circuit = create_quantum_encoding_circuit(
+                        [cirq.LineQubit(0)],  # ここでは1量子ビットに無理やりエンコード
+                        data_point,
+                        method=encoding_methods[0]  # 複数指定時は先頭を使う例
                     )
+                    circuits.append(circuit)
 
-            elif qpca_mode == 'rho_classical':
-                # ρを量子で構築し、古典で固有値分解
-                classical_eigvals_sorted, classical_eigvecs_sorted, contribution_ratios, rho \
-                    = perform_qpca_quantum_rho_classical_eigs(
-                        scaled_data, simulator, config
-                    )
-                print(
-                    "[INFO] ρ constructed quantumly, then classical diagonalization done.")
+                top_eigenvectors, top_eigenvalues = perform_qpca_qpe_simple(
+                    circuits, desired_num_components, simulator, config
+                )
 
-                # 1) 寄与率テーブルの表示
-                contrib_classical_df = pd.DataFrame({
-                    'Component': [f'PC{i+1}' for i in range(len(classical_eigvals_sorted))],
-                    'Eigenvalue': classical_eigvals_sorted,
-                    'Contribution Ratio': contribution_ratios
-                })
-                print("\n[Rho Classical Contribution Ratios Table]")
-                print(contrib_classical_df)
+                # 復元（デコード）したデータ（= 低次元空間）
+                decoded_data = decode_quantum_data(
+                    top_eigenvectors, scaled_data)
+                print(f"Decoded data shape: {decoded_data.shape}")
 
-                # 2) グラフ用のデータ準備
-                rho_eigvals = classical_eigvals_sorted
-                rho_contribution = contribution_ratios
+                # 可視化
+                if config.get('plotting', {}).get('plot_qpca_results', False):
+                    plot_qpca_results(decoded_data, labels, dname, config)
 
-                # 固有値バー図のプロット（オプション）
-                if config.get('plotting', {}).get('plot_eigenvalues', False):
-                    plot_eigenvalues(
-                        rho_eigvals,
-                        dname, config, method='rho_classical'
-                    )
+                # 寄与率計算
+                contribution_table = calculate_contribution_ratios(
+                    top_eigenvalues, desired_num_components)
+                print("qPCA (simple) Contribution Ratios Table:")
+                print(contribution_table)
 
             else:
                 print(f"[Warning] Unknown qpca_mode: {qpca_mode}")
 
-            # 5. 必要に応じて古典PCAで比較
+            # 5. 古典PCA
             perform_classical_pca_flag = config.get(
                 'perform_classical_pca', False)
             if perform_classical_pca_flag:
                 classical_pca_data, classical_eigenvalues, classical_components, classical_contribution_ratios = perform_classical_pca(
-                    scaled_data,
-                    num_components=desired_num_components,
-                    config=config
+                    scaled_data, num_components=desired_num_components, config=config
                 )
 
-                # 寄与率テーブルを表示
+                # 可視化
+                if config.get('plotting', {}).get('plot_classical_pca_results', False):
+                    plot_classical_pca_results(
+                        classical_pca_data, labels, dname, config)
+
+                # 寄与率テーブル
                 classical_contribution_table = pd.DataFrame({
                     'Component': [f'PC{i+1}' for i in range(len(classical_eigenvalues))],
                     'Eigenvalue': classical_eigenvalues,
                     'Contribution Ratio': classical_contribution_ratios
                 })
-                print("\n[Classical PCA Contribution Ratios Table]")
+                print("Classical PCA Contribution Ratios Table:")
                 print(classical_contribution_table)
 
-                # 比較グラフのプロット
-                if qpca_mode == 'block_all':
-                    limit = min(len(qpca_lams), len(classical_eigenvalues))
+                # qPCAと古典PCAの比較グラフ
+                #   - ブロックエンコード版の場合は固有値を top_eigenvalues として使うかは要検討
+                #   - 簡易版の場合は top_eigenvalues があるので比較OK
+                if config.get('plotting', {}).get('plot_pca_comparison', False) and qpca_mode == 'simple':
+                    # 上位成分のみ
+                    num_qpca_eig = len(top_eigenvalues)
+                    num_classical_eig = len(classical_eigenvalues)
+                    limit = min(num_qpca_eig, num_classical_eig)
                     plot_pca_comparison(
-                        qpca_lams[:limit],
+                        top_eigenvalues[:limit],
                         classical_eigenvalues[:limit],
-                        qpca_contribution[:limit],
-                        classical_contribution_ratios[:limit],
-                        dname, config
-                    )
-                elif qpca_mode == 'rho_classical':
-                    # rho_classical モードの場合の比較
-                    limit = min(len(rho_eigvals), len(classical_eigenvalues))
-                    plot_pca_comparison(
-                        rho_eigvals[:limit],
-                        classical_eigenvalues[:limit],
-                        rho_contribution[:limit],
+                        contribution_table['Contribution Ratio'].values[:limit],
                         classical_contribution_ratios[:limit],
                         dname, config
                     )
 
-                # 古典PCAの可視化
-                if config.get('plotting', {}).get('plot_classical_pca_results', False):
-                    plot_classical_pca_results(
-                        classical_pca_data, labels, dname, config
-                    )
-
-            # 6. 元データを2次元プロットする例
+            # 6. 元データの可視化（2次元など）
             if config.get('plotting', {}).get('plot_original_data', False):
                 plot_original_data(scaled_data, labels, dname, config)
 

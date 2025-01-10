@@ -112,36 +112,6 @@ def load_and_scale_dataset(dataset_name, method='standard', random_state=None):
 # 3. データを量子回路へエンコードする関数
 # =============================================================================
 
-def create_qrac_state_2to1(qubit: cirq.LineQubit, b1: int, b2: int) -> cirq.Circuit:
-    """
-    2つの古典ビット(b1, b2)を1量子ビットにエンコードする
-    2-to-1 QRAC 回路を返す。
-
-    状態:
-      (b1,b2) に応じて Bloch 球の赤道上で90°刻みの位置に配置。
-      θ = (2*b1 + b2) * (π/2)
-
-    生成される状態 |ψ_{b1,b2}> は
-      (|0> + e^{iθ}|1>) / √2
-    となる。
-
-    Returns:
-      量子回路 (cirq.Circuit)
-    """
-    circuit = cirq.Circuit()
-
-    # 初期状態: |0>
-    # Step1: Hゲートで |+> = (|0> + |1>)/sqrt{2} を生成
-    circuit.append(cirq.H(qubit))
-
-    # Step2: Rz(θ)
-    # θ は 4パターン: 0, π/2, π, 3π/2
-    theta = (2 * b1 + b2) * (np.pi / 2)
-    circuit.append(cirq.rz(theta)(qubit))
-
-    return circuit
-
-
 def create_quantum_encoding_circuit(qubits, data, method='amplitude'):
     """
     データを量子状態にエンコードするための回路を作成。
@@ -165,20 +135,33 @@ def create_quantum_encoding_circuit(qubits, data, method='amplitude'):
             if i < len(qubits):
                 circuit.append(cirq.rx(val_norm)(qubits[i]))
     elif method == 'qrac':
-        # 2-to-1 QRACの実装
+        # QRACを使ったエンコード
+        # QRACは通常、2つの古典ビットを1つの量子ビットにエンコードすることに用いられます
+        # ここでは、データを2つずつ取り出して1つの量子ビットにエンコードする
         for i in range(0, len(data), 2):
             if i + 1 < len(data):
-                bit1 = int(data[i] > 0)  # 閾値を0としてビット化
-                bit2 = int(data[i+1] > 0)
+                # 2つの値を取り出し、QRACエンコード
+                x1, x2 = data[i], data[i + 1]
+                # 値を -1.0 から 1.0 に正規化
+                x1 = (x1 - np.min(data)) / \
+                    (np.max(data) - np.min(data) + 1e-10) * 2 - 1.0
+                x2 = (x2 - np.min(data)) / \
+                    (np.max(data) - np.min(data) + 1e-10) * 2 - 1.0
+                x1, x2 = np.nan_to_num(x1), np.nan_to_num(x2)
+                # QRACの回路として、例えばRyとRzを使用（簡易的な例）
+                angle_y = np.arccos(x1)
+                angle_z = np.arccos(x2)
                 if i // 2 < len(qubits):
-                    qr = create_qrac_state_2to1(qubits[i // 2], bit1, bit2)
-                    circuit += qr
-            else:
-                # データが奇数の場合は余ったビットをエンコード
-                bit = int(data[i] > 0)
+                    circuit.append(cirq.ry(2 * angle_y)(qubits[i // 2]))
+                    circuit.append(cirq.rz(2 * angle_z)(qubits[i // 2]))
+            elif i < len(data):
+                # 最後の要素が余る場合、単独でエンコード
+                value = (data[i] - np.min(data)) / \
+                    (np.max(data) - np.min(data) + 1e-10) * 2 - 1.0
+                value = np.nan_to_num(value)
+                angle = 2 * np.arccos(value)
                 if i // 2 < len(qubits):
-                    if bit == 1:
-                        circuit.append(cirq.X(qubits[i // 2]))
+                    circuit.append(cirq.ry(angle)(qubits[i // 2]))
     elif method == 'amplitude':
         # 非推奨
         # 簡易的な amplitude encoding (正規化してRyに対応させる程度)

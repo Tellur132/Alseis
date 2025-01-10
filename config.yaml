@@ -5,7 +5,7 @@ dataset_name: iris
 # normalization_method: standard, minmax, robust (複数選択可)       
 normalization_method: standard
 
-# encoding_method: 'amplitude', 'phase', 'angle', 'qrac' (複数選択可)    
+# encoding_method: 'phase', 'angle', 'qrac' (複数選択可)    
 encoding_method: qrac
 
 random_seed:
@@ -36,3 +36,9 @@ plotting:
   eigenvalues_fig_path: "eigenvalues.png"
   pca_comparison_eigenvalues_fig_path: "pca_comparison_eigenvalues.png"
   pca_comparison_contribution_fig_path: "pca_comparison_contribution.png"
+
+time_parameter: 1.0
+num_ancilla: 8         # ここを 5 か 6 に増やす
+repetitions: 1000      # 測定回数も増やす
+
+qpca_mode: block_all      # 'block' or 'block_all' or 'rho_classical'
