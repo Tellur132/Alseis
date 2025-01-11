@@ -41,4 +41,4 @@ time_parameter: 1.0
 num_ancilla: 8         # ここを 5 か 6 に増やす
 repetitions: 1000      # 測定回数も増やす
 
-qpca_mode: block_all      # 'block' or 'block_all' or 'rho_classical'
+qpca_mode: rho_classical      # 'block' or 'block_all' or 'rho_classical'
