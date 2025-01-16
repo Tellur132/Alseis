@@ -150,20 +150,42 @@ def create_quantum_encoding_circuit(qubits, data, method='amplitude'):
     circuit = cirq.Circuit()
 
     if method == 'phase':
-        # 位相エンコードの例
+        # 位相エンコード
+        data_min = np.min(data)
+        data_max = np.max(data)
+
         for i, value in enumerate(data):
-            val_norm = (value - np.min(data)) / \
-                (np.max(data) - np.min(data) + 1e-10) * 2 - 1.0
+            # 0〜1に正規化
+            val_norm = (value - data_min) / (data_max - data_min + 1e-10)
+
+            # 0〜2πにスケーリング
             angle = 2 * np.pi * val_norm
+            # -π〜πにスケーリング
+            # angle = np.pi * (2 * val_norm - 1.0)
+
             if i < len(qubits):
+                # 必要に応じてHゲートなどでスーパーポジションを作ってから位相を与える
+                circuit.append(cirq.H(qubits[i]))
                 circuit.append(cirq.rz(angle)(qubits[i]))
+
     elif method == 'angle':
-        # 角度エンコードの例
+        # 角度エンコード (例: 0 ~ 2π)
+        min_val = np.min(data)
+        max_val = np.max(data)
+        range_val = max_val - min_val + 1e-10  # 0割り防止
+
         for i, value in enumerate(data):
-            val_norm = (value - np.min(data)) / \
-                (np.max(data) - np.min(data) + 1e-10) * np.pi
+            # 0～2π に正規化
+            val_norm = ((value - min_val) / range_val) * 2 * np.pi
+            # -π ～ +π に正規化したい場合
+            # 0～1 の正規化
+            # normalized = (value - min_val) / range_val
+            # -π/2 ～ +π/2 へ変換
+            # val_norm = (normalized - 0.5) * np.pi
+
             if i < len(qubits):
-                circuit.append(cirq.rx(val_norm)(qubits[i]))
+                circuit.append(cirq.rx(val_norm)(qubits[i]))  # X軸回転
+
     elif method == 'qrac':
         # 2-to-1 QRACの実装
         for i in range(0, len(data), 2):
